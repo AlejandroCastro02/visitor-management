@@ -1,0 +1,110 @@
+/* ============================================================
+   ARCHIVO: assets/css/custom.css
+   Descripción: Estilos personalizados del sistema.
+   Complementan a Bootstrap 5, no lo reemplazan.
+   ============================================================ */
+
+/* ── Fuente base ─────────────────────────────────────────── */
+body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
+/* ── Fuente monoespaciada para MACs y códigos ────────────── */
+.font-monospace {
+    font-family: 'Courier New', Courier, monospace;
+    letter-spacing: 0.05em; /* Un poco más de espacio entre caracteres */
+}
+
+/* ── Navbar: sombra más pronunciada ─────────────────────── */
+.navbar {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Tarjetas con hover suave ────────────────────────────── */
+.card {
+    transition: box-shadow 0.2s ease;
+}
+.card:hover {
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1) !important;
+}
+
+/* ── Tabla: filas con hover ──────────────────────────────── */
+.table-hover tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.04);
+    cursor: pointer;
+}
+
+/* ── Campos de MAC: estilo terminal ──────────────────────── */
+input.mac-input {
+    font-family: 'Courier New', monospace;
+    letter-spacing: 0.1em;
+    text-transform: uppercase; /* Forzar mayúsculas visualmente */
+}
+
+/* ── Badges redondeados ──────────────────────────────────── */
+.badge {
+    font-weight: 500;
+    letter-spacing: 0.02em;
+}
+
+/* ── Footer siempre al fondo ─────────────────────────────── */
+body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+.container-fluid {
+    flex: 1;
+}
+
+/* ── Animación de entrada para alertas ───────────────────── */
+.alert {
+    animation: slideDown 0.3s ease-out;
+}
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* ── Device cards en el detalle ─────────────────────────── */
+.device-row {
+    transition: border-color 0.2s;
+}
+.device-row:hover {
+    border-color: #0d6efd !important;
+}
+
+/* ── Login page: tarjeta centrada ────────────────────────── */
+@media (max-width: 576px) {
+    .card.shadow-lg {
+        border-radius: 0.5rem !important;
+        margin: 1rem;
+    }
+}
+
+/* ── Breadcrumb limpio ───────────────────────────────────── */
+.breadcrumb {
+    background: none;
+    padding: 0;
+    margin-bottom: 0.5rem;
+}
+.breadcrumb-item + .breadcrumb-item::before {
+    content: "›";
+}
+
+/* ── Spinner de carga ────────────────────────────────────── */
+.spinner-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(255,255,255,0.8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
