@@ -81,12 +81,44 @@ function getLoginUrl(): string {
  * Verifica que el usuario tenga el rol requerido.
  * Uso: requireRole('admin') en páginas solo para admins.
  *
- * @param string $role  Rol requerido ('admin' o 'receptionist')
+ * @param string $role  Rol requerido ('admin', 'receptionist' o 'guard')
  */
 function requireRole(string $role): void {
     if (!isset($_SESSION['user_role']) || $_SESSION['user_role'] !== $role) {
-        // El usuario no tiene el rol necesario
         header("HTTP/1.1 403 Forbidden");
         die("<h2>Acceso denegado.</h2><p>No tienes permisos para esta sección.</p>");
     }
+}
+
+/**
+ * requireAnyRole()
+ * Verifica que el usuario tenga AL MENOS uno de los roles indicados.
+ * Uso: requireAnyRole(['admin', 'receptionist']) bloquea a vigilantes.
+ *
+ * @param array $roles  Lista de roles permitidos
+ */
+function requireAnyRole(array $roles): void {
+    if (!isset($_SESSION['user_role']) || !in_array($_SESSION['user_role'], $roles, true)) {
+        header("HTTP/1.1 403 Forbidden");
+        die("
+            <link href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css' rel='stylesheet'>
+            <div class='container text-center mt-5'>
+                <i class='bi bi-shield-exclamation' style='font-size:4rem;color:#dc3545'></i>
+                <h2 class='mt-3'>Acceso Denegado</h2>
+                <p class='text-muted'>Tu rol no tiene permisos para realizar esta acción.</p>
+                <a href='../dashboard.php' class='btn btn-primary mt-2'>Volver al Dashboard</a>
+            </div>
+            <link href='https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css' rel='stylesheet'>
+        ");
+        exit();
+    }
+}
+
+/**
+ * canRegisterVisit()
+ * Devuelve true si el usuario actual puede registrar nuevas visitas.
+ * Útil para mostrar/ocultar botones en vistas sin lanzar error.
+ */
+function canRegisterVisit(): bool {
+    return in_array($_SESSION['user_role'] ?? '', ['admin', 'receptionist'], true);
 }
