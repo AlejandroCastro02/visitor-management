@@ -1,55 +1,56 @@
 <?php
 // ============================================================
 // ARCHIVO: visitors/detail.php
-// Descripción: Detalle completo de una visita específica.
-//
-// Muestra:
-//  - Datos del visitante
-//  - Detalles de la visita (motivo, anfitrión, tiempos)
-//  - Lista de dispositivos registrados (con MACs)
-//  - Botón para marcar salida si la visita está activa
+// Descripción: Detalle completo de una visita.
+// ACTUALIZACIÓN: Botones de editar/eliminar para administradores.
 // ============================================================
 
 $depth = 1;
 require_once __DIR__ . '/../auth/auth_check.php';
 require_once __DIR__ . '/../config/database.php';
 
-// Obtener el ID de la visita del parámetro GET
-// (int) castea a entero: si alguien pasa "1 OR 1=1", queda como 1
 $visit_id = (int)filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
 
-// Si no hay ID válido, redirigir a la lista
 if ($visit_id <= 0) {
     header("Location: list.php");
     exit();
 }
 
-// ¿Viene de un registro nuevo? Para mostrar mensaje de éxito
-$is_new = isset($_GET['new']);
+// Mensajes de retroalimentación
+$success_key = filter_input(INPUT_GET, 'success', FILTER_SANITIZE_SPECIAL_CHARS) ?? '';
+$error_key   = filter_input(INPUT_GET, 'error',   FILTER_SANITIZE_SPECIAL_CHARS) ?? '';
+
+$success_messages = [
+    'exit=1'  => '✅ Salida registrada correctamente.',
+    'updated' => '✅ Datos del visitante actualizados.',
+];
+$error_messages = [
+    'already_exited' => 'Esta visita ya había sido completada.',
+];
 
 try {
     $db = getDB();
 
-    // ── Query: Detalle completo de la visita ─────────────────
-    // Múltiples JOINs para traer datos de varias tablas en una query
+    // ── Query principal: datos de la visita + visitante ───────
     $stmt = $db->prepare("
         SELECT
-            v.id             as visit_id,
-            v.host_name,
-            v.host_department,
-            v.reason,
+            v.id            AS visit_id,
             v.entry_time,
             v.exit_time,
             v.status,
+            v.host_name,
+            v.host_department,
+            v.reason,
             v.notes,
-            vis.id           as visitor_id,
+            v.registered_by,
+            vis.id          AS visitor_id,
             vis.full_name,
             vis.id_number,
-            vis.email,
+            vis.email       AS visitor_email,
             vis.phone,
             vis.company,
-            vis.created_at   as visitor_since,
-            u.username       as registered_by
+            vis.created_at  AS visitor_created_at,
+            u.username      AS registered_by_name
         FROM visits v
         JOIN visitors vis ON v.visitor_id = vis.id
         JOIN users u ON v.registered_by = u.id
@@ -59,13 +60,12 @@ try {
     $stmt->execute([$visit_id]);
     $visit = $stmt->fetch();
 
-    // Si no existe la visita, redirigir
     if (!$visit) {
         header("Location: list.php");
         exit();
     }
 
-    // ── Query: Dispositivos de esta visita ───────────────────
+    // ── Dispositivos de la visita ─────────────────────────────
     $stmt = $db->prepare("
         SELECT id, device_type, device_name, mac_address, registered_at
         FROM devices
@@ -75,16 +75,16 @@ try {
     $stmt->execute([$visit_id]);
     $devices = $stmt->fetchAll();
 
-    // ── Query: Historial de visitas del mismo visitante ───────
+    // ── Otras visitas del mismo visitante ─────────────────────
     $stmt = $db->prepare("
-        SELECT id, entry_time, exit_time, host_name, status, reason
+        SELECT id, entry_time, exit_time, status, host_name
         FROM visits
         WHERE visitor_id = ? AND id != ?
         ORDER BY entry_time DESC
         LIMIT 5
     ");
     $stmt->execute([$visit['visitor_id'], $visit_id]);
-    $history = $stmt->fetchAll();
+    $other_visits = $stmt->fetchAll();
 
 } catch (PDOException $e) {
     error_log("Error en detail.php: " . $e->getMessage());
@@ -92,266 +92,278 @@ try {
     exit();
 }
 
-// Calcular duración de la visita
-$entry = new DateTime($visit['entry_time']);
-$exit  = $visit['exit_time'] ? new DateTime($visit['exit_time']) : new DateTime();
-$duration = $entry->diff($exit);
+// Generar CSRF para el form de salida y eliminación
+if (empty($_SESSION['csrf_token'])) {
+    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+}
 
+$is_admin  = ($_SESSION['user_role'] ?? '') === 'admin';
 $page_title = 'Detalle de Visita';
 $base_path  = '../';
 require_once __DIR__ . '/../includes/header.php';
+
+// Calcular duración
+$duration = '';
+if ($visit['exit_time']) {
+    $secs = strtotime($visit['exit_time']) - strtotime($visit['entry_time']);
+    $h    = floor($secs / 3600);
+    $m    = floor(($secs % 3600) / 60);
+    $duration = $h > 0 ? "{$h}h {$m}min" : "{$m}min";
+}
 ?>
 
-<!-- ── BREADCRUMB Y TÍTULO ───────────────────────────────── -->
-<div class="row mb-4">
+<!-- ── ENCABEZADO ────────────────────────────────────────── -->
+<div class="row mb-3 align-items-start">
     <div class="col">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="../dashboard.php">Dashboard</a></li>
                 <li class="breadcrumb-item"><a href="list.php">Visitantes</a></li>
-                <li class="breadcrumb-item active">Detalle #<?= $visit['visit_id'] ?></li>
+                <li class="breadcrumb-item active">Detalle Visita #<?= $visit_id ?></li>
             </ol>
         </nav>
-        <h2 class="fw-bold">
-            <i class="bi bi-person-badge text-primary"></i>
+        <h2 class="fw-bold mb-0">
             <?= htmlspecialchars($visit['full_name']) ?>
         </h2>
+        <p class="text-muted">
+            <code class="font-monospace"><?= htmlspecialchars($visit['id_number']) ?></code>
+            &mdash; Visita #<?= $visit_id ?>
+        </p>
     </div>
-    <div class="col-auto d-flex align-items-center gap-2">
+    <div class="col-auto d-flex gap-2 flex-wrap">
+        <!-- Botón de salida (solo si activa) -->
         <?php if ($visit['status'] === 'active'): ?>
-        <a href="exit.php?id=<?= (int)$visit['visit_id'] ?>"
-           class="btn btn-warning">
+        <a href="exit.php?id=<?= $visit_id ?>" class="btn btn-warning">
             <i class="bi bi-door-closed"></i> Registrar Salida
         </a>
         <?php endif; ?>
+
+        <!-- Acciones de administrador -->
+        <?php if ($is_admin): ?>
+        <a href="../admin/visitor_edit.php?id=<?= (int)$visit['visitor_id'] ?>"
+           class="btn btn-outline-primary" title="Editar datos del visitante">
+            <i class="bi bi-pencil"></i> Editar Visitante
+        </a>
+
+        <!-- Eliminar visitante (con confirmación) -->
+        <form method="POST" action="../admin/visitor_delete.php" class="d-inline">
+            <input type="hidden" name="csrf_token"  value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
+            <input type="hidden" name="visitor_id"  value="<?= (int)$visit['visitor_id'] ?>">
+            <button type="submit" class="btn btn-outline-danger"
+                    onclick="return confirm('⚠️ ELIMINACIÓN PERMANENTE\n\n¿Eliminar a <?= htmlspecialchars(addslashes($visit['full_name'])) ?> y TODAS sus visitas y dispositivos?\n\nEsta acción NO se puede deshacer.')">
+                <i class="bi bi-trash"></i> Eliminar Visitante
+            </button>
+        </form>
+        <?php endif; ?>
+
         <a href="list.php" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Volver
         </a>
     </div>
 </div>
 
-<!-- ── ALERTA DE NUEVO REGISTRO ─────────────────────────── -->
-<?php if ($is_new): ?>
-<div class="alert alert-success alert-dismissible d-flex align-items-center mb-4">
-    <i class="bi bi-check-circle-fill me-2 fs-5"></i>
-    <div>
-        <strong>¡Visita registrada exitosamente!</strong>
-        La visita de <strong><?= htmlspecialchars($visit['full_name']) ?></strong>
-        ha sido registrada. Hora de entrada: <?= date('H:i', strtotime($visit['entry_time'])) ?>
-    </div>
+<!-- ── ALERTAS DE RETROALIMENTACIÓN ──────────────────────── -->
+<?php
+$exit_success = isset($_GET['exit']) && $_GET['exit'] === '1';
+if ($exit_success || $success_key === 'updated'): ?>
+<div class="alert alert-success alert-dismissible d-flex align-items-center">
+    <i class="bi bi-check-circle-fill me-2"></i>
+    <?= $exit_success ? 'Salida registrada correctamente.' : 'Datos del visitante actualizados.' ?>
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
 <?php endif; ?>
 
+<?php if ($error_key && isset($error_messages[$error_key])): ?>
+<div class="alert alert-warning alert-dismissible d-flex align-items-center">
+    <i class="bi bi-exclamation-triangle-fill me-2"></i>
+    <?= htmlspecialchars($error_messages[$error_key]) ?>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+<?php endif; ?>
+
+<!-- ── CONTENIDO PRINCIPAL ─────────────────────────────── -->
 <div class="row g-4">
 
-    <!-- ── COLUMNA IZQUIERDA ─────────────────────────────── -->
-    <div class="col-12 col-lg-4">
-
-        <!-- Tarjeta: Datos del Visitante -->
-        <div class="card border-0 shadow-sm mb-4">
-            <div class="card-header bg-white py-3">
-                <h6 class="mb-0 fw-semibold">
-                    <i class="bi bi-person-circle text-primary"></i> Datos del Visitante
-                </h6>
-            </div>
-            <div class="card-body">
-                <dl class="row mb-0">
-                    <dt class="col-5 text-muted small">Nombre</dt>
-                    <dd class="col-7 small"><?= htmlspecialchars($visit['full_name']) ?></dd>
-
-                    <dt class="col-5 text-muted small">ID/Cédula</dt>
-                    <dd class="col-7 small font-monospace"><?= htmlspecialchars($visit['id_number']) ?></dd>
-
-                    <dt class="col-5 text-muted small">Email</dt>
-                    <dd class="col-7 small">
-                        <?= $visit['email']
-                            ? htmlspecialchars($visit['email'])
-                            : '<span class="text-muted">—</span>'
-                        ?>
-                    </dd>
-
-                    <dt class="col-5 text-muted small">Teléfono</dt>
-                    <dd class="col-7 small"><?= htmlspecialchars($visit['phone'] ?? '—') ?></dd>
-
-                    <dt class="col-5 text-muted small">Empresa</dt>
-                    <dd class="col-7 small"><?= htmlspecialchars($visit['company'] ?? '—') ?></dd>
-
-                    <dt class="col-5 text-muted small">1er Registro</dt>
-                    <dd class="col-7 small"><?= date('d/m/Y', strtotime($visit['visitor_since'])) ?></dd>
-                </dl>
-            </div>
-        </div>
-
-        <!-- Tarjeta: Historial de visitas previas -->
-        <?php if (!empty($history)): ?>
-        <div class="card border-0 shadow-sm">
-            <div class="card-header bg-white py-3">
-                <h6 class="mb-0 fw-semibold">
-                    <i class="bi bi-clock-history text-muted"></i> Visitas Anteriores
-                </h6>
-            </div>
-            <div class="card-body p-0">
-                <ul class="list-group list-group-flush">
-                    <?php foreach ($history as $h): ?>
-                    <li class="list-group-item py-2">
-                        <div class="d-flex justify-content-between">
-                            <small class="text-muted">
-                                <?= date('d/m/Y', strtotime($h['entry_time'])) ?>
-                            </small>
-                            <?php
-                            echo match($h['status']) {
-                                'active'    => '<span class="badge bg-success">Activa</span>',
-                                'completed' => '<span class="badge bg-secondary">Completada</span>',
-                                'cancelled' => '<span class="badge bg-danger">Cancelada</span>',
-                                default     => ''
-                            };
-                            ?>
-                        </div>
-                        <small><?= htmlspecialchars($h['host_name']) ?></small>
-                    </li>
-                    <?php endforeach; ?>
-                </ul>
-            </div>
-        </div>
-        <?php endif; ?>
-
-    </div>
-
-    <!-- ── COLUMNA DERECHA ───────────────────────────────── -->
+    <!-- Columna izquierda: datos de la visita -->
     <div class="col-12 col-lg-8">
 
-        <!-- Tarjeta: Detalles de la Visita -->
-        <div class="card border-0 shadow-sm mb-4">
-            <div class="card-header bg-white py-3 d-flex justify-content-between">
-                <h6 class="mb-0 fw-semibold">
-                    <i class="bi bi-calendar-check text-primary"></i> Detalles de la Visita
-                </h6>
-                <!-- Badge de estado con color -->
-                <?php
-                echo match($visit['status']) {
-                    'active'    => '<span class="badge bg-success fs-6">Activa</span>',
-                    'completed' => '<span class="badge bg-secondary fs-6">Completada</span>',
-                    'cancelled' => '<span class="badge bg-danger fs-6">Cancelada</span>',
-                    default     => ''
-                };
-                ?>
+        <!-- Tarjeta de estado de la visita -->
+        <?php
+        [$border_color, $bg_status, $status_label] = match($visit['status']) {
+            'active'    => ['border-success', 'bg-success', 'Visita Activa'],
+            'completed' => ['border-secondary','bg-secondary','Visita Completada'],
+            'cancelled' => ['border-danger',  'bg-danger',  'Visita Cancelada'],
+            default     => ['border-light',   'bg-secondary', $visit['status']],
+        };
+        ?>
+        <div class="card border-0 shadow-sm border-top border-5 <?= $border_color ?>">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center py-3">
+                <h5 class="mb-0 fw-semibold">
+                    <i class="bi bi-clock-history text-primary"></i> Detalle de la Visita
+                </h5>
+                <span class="badge <?= $bg_status ?> fs-6"><?= $status_label ?></span>
             </div>
             <div class="card-body">
                 <div class="row g-3">
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Visita a</p>
-                        <p class="fw-semibold"><?= htmlspecialchars($visit['host_name']) ?></p>
+                    <div class="col-sm-6">
+                        <small class="text-muted d-block">Visita a</small>
+                        <strong><?= htmlspecialchars($visit['host_name']) ?></strong>
+                        <?php if ($visit['host_department']): ?>
+                            <br><span class="text-muted small"><?= htmlspecialchars($visit['host_department']) ?></span>
+                        <?php endif; ?>
                     </div>
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Departamento</p>
-                        <p><?= htmlspecialchars($visit['host_department'] ?? '—') ?></p>
+                    <div class="col-sm-6">
+                        <small class="text-muted d-block">Motivo</small>
+                        <span><?= htmlspecialchars($visit['reason']) ?></span>
                     </div>
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Hora de Entrada</p>
-                        <p class="fw-semibold text-success">
-                            <i class="bi bi-door-open"></i>
-                            <?= date('d/m/Y H:i', strtotime($visit['entry_time'])) ?>
-                        </p>
+                    <div class="col-sm-4">
+                        <small class="text-muted d-block">Hora de Entrada</small>
+                        <strong><?= date('d/m/Y H:i', strtotime($visit['entry_time'])) ?></strong>
                     </div>
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Hora de Salida</p>
-                        <p class="fw-semibold <?= $visit['exit_time'] ? 'text-danger' : 'text-muted' ?>">
-                            <i class="bi bi-door-closed"></i>
-                            <?= $visit['exit_time']
-                                ? date('d/m/Y H:i', strtotime($visit['exit_time']))
-                                : 'Aún en las instalaciones'
-                            ?>
-                        </p>
+                    <div class="col-sm-4">
+                        <small class="text-muted d-block">Hora de Salida</small>
+                        <?php if ($visit['exit_time']): ?>
+                            <strong><?= date('d/m/Y H:i', strtotime($visit['exit_time'])) ?></strong>
+                        <?php else: ?>
+                            <span class="text-success fw-bold">Aún dentro</span>
+                        <?php endif; ?>
                     </div>
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Duración</p>
-                        <p>
-                            <!-- Formatear la diferencia de tiempo -->
-                            <?= $duration->h > 0 ? $duration->h . 'h ' : '' ?>
-                            <?= $duration->i ?>min
-                            <?= $visit['status'] === 'active' ? '(en curso)' : '' ?>
-                        </p>
-                    </div>
-                    <div class="col-md-6">
-                        <p class="text-muted small mb-1">Registrado por</p>
-                        <p><?= htmlspecialchars($visit['registered_by']) ?></p>
-                    </div>
-                    <div class="col-12">
-                        <p class="text-muted small mb-1">Motivo</p>
-                        <p class="border rounded p-2 bg-light"><?= htmlspecialchars($visit['reason']) ?></p>
+                    <div class="col-sm-4">
+                        <small class="text-muted d-block">Duración</small>
+                        <strong><?= $duration ?: '—' ?></strong>
                     </div>
                     <?php if ($visit['notes']): ?>
                     <div class="col-12">
-                        <p class="text-muted small mb-1">Notas</p>
-                        <p class="border rounded p-2 bg-light"><?= htmlspecialchars($visit['notes']) ?></p>
+                        <small class="text-muted d-block">Observaciones</small>
+                        <span><?= htmlspecialchars($visit['notes']) ?></span>
                     </div>
                     <?php endif; ?>
+                    <div class="col-12">
+                        <small class="text-muted">
+                            Registrado por <strong><?= htmlspecialchars($visit['registered_by_name']) ?></strong>
+                            el <?= date('d/m/Y \a \l\a\s H:i', strtotime($visit['entry_time'])) ?>
+                        </small>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Tarjeta: Dispositivos Registrados -->
-        <div class="card border-0 shadow-sm">
+        <!-- Dispositivos -->
+        <div class="card border-0 shadow-sm mt-4">
             <div class="card-header bg-white py-3">
-                <h6 class="mb-0 fw-semibold">
+                <h5 class="mb-0 fw-semibold">
                     <i class="bi bi-laptop text-primary"></i>
-                    Dispositivos Registrados (<?= count($devices) ?>)
-                </h6>
+                    Dispositivos Registrados
+                    <span class="badge bg-secondary ms-1"><?= count($devices) ?></span>
+                </h5>
             </div>
             <div class="card-body">
                 <?php if (empty($devices)): ?>
-                    <p class="text-muted text-center py-3">
-                        <i class="bi bi-laptop d-block fs-2 mb-2"></i>
-                        No se registraron dispositivos para esta visita.
+                    <p class="text-muted text-center py-3 mb-0">
+                        <i class="bi bi-laptop-fill d-block fs-2 mb-2 opacity-25"></i>
+                        No se registraron dispositivos en esta visita.
                     </p>
                 <?php else: ?>
-                    <div class="row g-3">
-                        <?php foreach ($devices as $device): ?>
-                        <div class="col-12 col-md-6">
-                            <div class="border rounded p-3 bg-light h-100">
-                                <!-- Ícono según el tipo de dispositivo -->
-                                <?php
-                                $icon = match($device['device_type']) {
-                                    'laptop'     => 'bi-laptop',
-                                    'smartphone' => 'bi-phone',
-                                    'tablet'     => 'bi-tablet',
-                                    default      => 'bi-device-hdd'
-                                };
-                                $type_label = match($device['device_type']) {
-                                    'laptop'     => 'Laptop',
-                                    'smartphone' => 'Smartphone',
-                                    'tablet'     => 'Tablet',
-                                    default      => 'Otro'
-                                };
-                                ?>
-                                <div class="d-flex align-items-center gap-2 mb-2">
-                                    <i class="bi <?= $icon ?> fs-4 text-primary"></i>
-                                    <div>
-                                        <strong class="small">
-                                            <?= htmlspecialchars($device['device_name'] ?? $type_label) ?>
-                                        </strong>
-                                        <br>
-                                        <span class="badge bg-secondary small"><?= $type_label ?></span>
-                                    </div>
-                                </div>
-                                <!-- Dirección MAC con fuente monoespaciada para mejor legibilidad -->
-                                <div class="bg-dark text-success font-monospace small rounded p-2 text-center">
-                                    <i class="bi bi-router me-1"></i>
-                                    <?= htmlspecialchars($device['mac_address']) ?>
-                                </div>
-                                <p class="text-muted small mb-0 mt-2">
-                                    Registrado: <?= date('H:i', strtotime($device['registered_at'])) ?>
-                                </p>
-                            </div>
+                    <?php foreach ($devices as $device):
+                        $type_icon = match($device['device_type']) {
+                            'laptop'     => 'bi-laptop',
+                            'smartphone' => 'bi-phone',
+                            'tablet'     => 'bi-tablet',
+                            default      => 'bi-device-hdd',
+                        };
+                    ?>
+                    <div class="d-flex align-items-center gap-3 p-3 border rounded mb-2 device-row">
+                        <i class="bi <?= $type_icon ?> fs-3 text-primary"></i>
+                        <div class="flex-grow-1">
+                            <strong><?= htmlspecialchars($device['device_name'] ?: ucfirst($device['device_type'])) ?></strong>
+                            <br>
+                            <code class="text-muted font-monospace"><?= htmlspecialchars($device['mac_address']) ?></code>
                         </div>
-                        <?php endforeach; ?>
+                        <span class="badge bg-light text-dark border">
+                            <?= ucfirst($device['device_type']) ?>
+                        </span>
                     </div>
+                    <?php endforeach; ?>
                 <?php endif; ?>
             </div>
         </div>
 
-    </div>
-</div>
+    </div><!-- /.col-lg-8 -->
+
+    <!-- Columna derecha: datos del visitante e historial -->
+    <div class="col-12 col-lg-4">
+
+        <!-- Datos personales del visitante -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white py-3">
+                <h5 class="mb-0 fw-semibold">
+                    <i class="bi bi-person-badge text-primary"></i> Datos del Visitante
+                </h5>
+            </div>
+            <div class="card-body">
+                <dl class="row mb-0 small">
+                    <dt class="col-5 text-muted">Nombre</dt>
+                    <dd class="col-7"><?= htmlspecialchars($visit['full_name']) ?></dd>
+
+                    <dt class="col-5 text-muted">ID</dt>
+                    <dd class="col-7 font-monospace"><?= htmlspecialchars($visit['id_number']) ?></dd>
+
+                    <?php if ($visit['visitor_email']): ?>
+                    <dt class="col-5 text-muted">Email</dt>
+                    <dd class="col-7"><?= htmlspecialchars($visit['visitor_email']) ?></dd>
+                    <?php endif; ?>
+
+                    <?php if ($visit['phone']): ?>
+                    <dt class="col-5 text-muted">Teléfono</dt>
+                    <dd class="col-7"><?= htmlspecialchars($visit['phone']) ?></dd>
+                    <?php endif; ?>
+
+                    <?php if ($visit['company']): ?>
+                    <dt class="col-5 text-muted">Empresa</dt>
+                    <dd class="col-7"><?= htmlspecialchars($visit['company']) ?></dd>
+                    <?php endif; ?>
+
+                    <dt class="col-5 text-muted">1ª visita</dt>
+                    <dd class="col-7"><?= date('d/m/Y', strtotime($visit['visitor_created_at'])) ?></dd>
+                </dl>
+            </div>
+        </div>
+
+        <!-- Historial de otras visitas -->
+        <?php if (!empty($other_visits)): ?>
+        <div class="card border-0 shadow-sm mt-3">
+            <div class="card-header bg-white py-3">
+                <h6 class="mb-0 fw-semibold text-muted">
+                    <i class="bi bi-clock-history"></i> Visitas Anteriores
+                </h6>
+            </div>
+            <ul class="list-group list-group-flush">
+                <?php foreach ($other_visits as $ov): ?>
+                <li class="list-group-item py-2">
+                    <a href="detail.php?id=<?= (int)$ov['id'] ?>" class="text-decoration-none">
+                        <small class="d-block text-muted">
+                            <?= date('d/m/Y H:i', strtotime($ov['entry_time'])) ?>
+                        </small>
+                        <span><?= htmlspecialchars($ov['host_name']) ?></span>
+                        <?php
+                        $badge = match($ov['status']) {
+                            'active'    => 'bg-success',
+                            'completed' => 'bg-secondary',
+                            default     => 'bg-danger'
+                        };
+                        ?>
+                        <span class="badge <?= $badge ?> ms-1 float-end">
+                            <?= ucfirst($ov['status']) ?>
+                        </span>
+                    </a>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+        <?php endif; ?>
+
+    </div><!-- /.col-lg-4 -->
+
+</div><!-- /.row -->
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

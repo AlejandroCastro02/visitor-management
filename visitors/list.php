@@ -111,9 +111,11 @@ require_once __DIR__ . '/../includes/header.php';
         </p>
     </div>
     <div class="col-auto">
+        <?php if (canRegisterVisit()): ?>
         <a href="register.php" class="btn btn-primary">
             <i class="bi bi-person-plus"></i> Nueva Visita
         </a>
+        <?php endif; ?>
     </div>
 </div>
 

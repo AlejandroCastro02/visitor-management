@@ -4,15 +4,27 @@ Prototipo funcional para el registro de visitantes en Oficinas Centrales.
 
 ---
 
+## 🚀 Historial de Versiones
+
+| Versión | Descripción |
+|---------|-------------|
+| **v2.0** | Panel de administración completo, módulo de auditoría y sistema de roles con permisos diferenciados |
+| v1.0 | Registro de visitas, gestión básica de visitantes y validación de dispositivos por MAC |
+
+---
+
 ## 📋 Tabla de Contenidos
 
 1. [Requisitos](#requisitos)
 2. [Instalación](#instalación)
-3. [Credenciales de Prueba](#credenciales-de-prueba)
-4. [Arquitectura del Sistema](#arquitectura-del-sistema)
-5. [Arquitectura de Seguridad](#arquitectura-de-seguridad)
-6. [Propuesta de Segmentación de Red VLAN](#propuesta-de-segmentación-de-red-vlan)
-7. [Estructura de Archivos](#estructura-de-archivos)
+3. [Instalación desde v1.0 (Migración)](#instalación-desde-v10-migración)
+4. [Credenciales de Prueba](#credenciales-de-prueba)
+5. [Novedades v2.0](#novedades-v20)
+6. [Roles y Permisos](#roles-y-permisos)
+7. [Arquitectura del Sistema](#arquitectura-del-sistema)
+8. [Arquitectura de Seguridad](#arquitectura-de-seguridad)
+9. [Propuesta de Segmentación de Red VLAN](#propuesta-de-segmentación-de-red-vlan)
+10. [Estructura de Archivos](#estructura-de-archivos)
 
 ---
 
@@ -27,14 +39,16 @@ Prototipo funcional para el registro de visitantes en Oficinas Centrales.
 
 ## Instalación
 
-### Paso 1: Clonar o descomprimir el proyecto
+### Instalación nueva (desde cero)
+
+#### Paso 1: Clonar o descomprimir el proyecto
 
 Colocar la carpeta `visitor-management` dentro de tu servidor web:
 - XAMPP: `C:/xampp/htdocs/visitor-management`
 - WAMP: `C:/wamp64/www/visitor-management`
 - Linux: `/var/www/html/visitor-management`
 
-### Paso 2: Crear la base de datos
+#### Paso 2: Crear la base de datos
 
 Abrir phpMyAdmin o MySQL CLI y ejecutar:
 
@@ -44,7 +58,15 @@ SOURCE /ruta/al/proyecto/database/schema.sql
 
 O copiar y pegar el contenido del archivo `database/schema.sql` directamente en phpMyAdmin.
 
-### Paso 3: Configurar la conexión
+#### Paso 3: Ejecutar la migración v2.0
+
+Ejecutar también el archivo de migración para agregar la tabla de auditoría y el nuevo rol:
+
+```sql
+SOURCE /ruta/al/proyecto/database/migration_audit.sql
+```
+
+#### Paso 4: Configurar la conexión
 
 Editar el archivo `config/database.php`:
 
@@ -55,13 +77,31 @@ define('DB_USER', 'tu_usuario');   // Cambiar
 define('DB_PASS', 'tu_password');  // Cambiar
 ```
 
-### Paso 4: Iniciar el servidor
+#### Paso 5: Iniciar el servidor
 
 Iniciar Apache y MySQL desde XAMPP/WAMP y abrir en el navegador:
 
 ```
 http://localhost/visitor-management/
 ```
+
+---
+
+## Instalación desde v1.0 (Migración)
+
+Si ya tienes v1.0 instalada y en uso, **no ejecutes `schema.sql`** ya que borraría tus datos. Solo sigue estos pasos:
+
+**Paso 1:** Reemplazar todos los archivos PHP del proyecto con los de v2.0.
+
+**Paso 2:** Ejecutar únicamente la migración sobre la BD existente:
+
+```sql
+SOURCE /ruta/al/proyecto/database/migration_audit.sql
+```
+
+Esto agrega el rol `guard` a la tabla `users` y crea la tabla `audit_log` sin tocar ningún dato existente.
+
+**Paso 3:** Verificar el acceso iniciando sesión con el usuario administrador y comprobando que aparece el menú **Administración** en la barra de navegación.
 
 ---
 
@@ -72,7 +112,83 @@ http://localhost/visitor-management/
 | Administrador | admin@sistema.local | Admin1234! |
 | Recepcionista | recepcion@sistema.local | Recep1234! |
 
-> ⚠️ Cambiar estas credenciales antes de un despliegue real.
+> ⚠️ Cambiar estas credenciales antes de un despliegue real. Usar `setup.php` para regenerar los hashes en el servidor de destino y eliminarlo después.
+
+---
+
+## Novedades v2.0
+
+### 🛡️ Panel de Administración de Usuarios
+
+Accesible desde el menú **Administración → Gestión de Usuarios** (solo rol `admin`).
+
+Permite el ciclo CRUD completo sobre las cuentas del sistema:
+
+- **Crear** usuarios con validación de contraseña segura (mínimo 8 caracteres, mayúscula, minúscula y número).
+- **Consultar** la lista de usuarios con filtro por nombre, email y rol.
+- **Editar** datos del usuario incluyendo cambio de contraseña opcional.
+- **Activar / Desactivar** cuentas sin eliminar el historial de actividad asociado.
+- **Eliminar** usuarios con protección ante registros vinculados en la BD.
+
+Reglas de negocio aplicadas en el servidor (no eludibles desde el navegador):
+
+- Un administrador no puede desactivar ni degradar su propia cuenta.
+- No se puede eliminar ni desactivar al único administrador activo del sistema.
+- Si un usuario tiene visitas registradas, la integridad referencial de la BD impide su eliminación, indicando al operador que debe desactivarlo en su lugar.
+
+### 👥 Gestión de Visitantes desde el Panel Admin
+
+El administrador puede editar y eliminar registros de visitantes directamente desde la vista de detalle:
+
+- **Editar** corrige datos personales (nombre, identificación, email, teléfono, empresa) con validación de unicidad del número de identificación.
+- **Eliminar** borra al visitante junto con todas sus visitas y dispositivos en una única transacción atómica, garantizando que no queden registros huérfanos.
+
+### 📋 Módulo de Auditoría (Bitácora de Eventos)
+
+Accesible desde **Administración → Bitácora de Auditoría**. Registra de forma automática cada acción relevante del sistema con tres datos clave:
+
+- **Quién:** nombre y rol del usuario que ejecutó la acción, capturado en el momento del evento.
+- **Qué:** código de acción estandarizado (`CREATE_USER`, `DELETE_VISITOR`, `EXIT_VISIT`, etc.) con descripción legible de los campos modificados.
+- **Cuándo:** timestamp exacto con fecha y hora.
+
+Adicionalmente registra la dirección IP del cliente y el User-Agent para contexto forense.
+
+La bitácora es de solo lectura para todos los roles, incluyendo el administrador, garantizando su integridad. Si un usuario es eliminado del sistema, sus eventos en el log se conservan con `user_id = NULL` gracias a la restricción `ON DELETE SET NULL`.
+
+La vista ofrece seis filtros combinables: búsqueda de texto libre, tipo de acción, entidad afectada, usuario ejecutor, fecha desde y fecha hasta.
+
+### 🔐 Sistema de Roles con Permisos Diferenciados
+
+Se incorpora el rol **Vigilante** (`guard`) con acceso restringido. La siguiente tabla resume los permisos por rol:
+
+| Acción | Administrador | Recepcionista | Vigilante |
+|--------|:---:|:---:|:---:|
+| Ver dashboard y métricas | ✅ | ✅ | ✅ |
+| Ver lista de visitantes | ✅ | ✅ | ✅ |
+| Ver detalle de visita | ✅ | ✅ | ✅ |
+| Registrar nueva visita | ✅ | ✅ | ❌ |
+| Registrar salida de visitante | ✅ | ✅ | ✅ |
+| Editar datos de visitante | ✅ | ❌ | ❌ |
+| Eliminar visitante | ✅ | ❌ | ❌ |
+| Gestión de usuarios del sistema | ✅ | ❌ | ❌ |
+| Consultar bitácora de auditoría | ✅ | ❌ | ❌ |
+
+Los permisos se verifican en el servidor en cada petición. Intentar acceder a una URL restringida devuelve HTTP 403 independientemente de cómo esté configurado el navegador.
+
+---
+
+## Roles y Permisos
+
+El sistema cuenta con tres roles definidos en la base de datos:
+
+**`admin` — Administrador**
+Acceso total al sistema. Gestiona usuarios, visualiza la bitácora completa y puede editar o eliminar cualquier registro. Debe ser asignado con precaución.
+
+**`receptionist` — Recepcionista**
+Rol operativo principal. Registra nuevas visitas y dispositivos, gestiona entradas y salidas. No tiene acceso al panel de administración ni a la bitácora.
+
+**`guard` — Vigilante**
+Rol de consulta y control de salidas. Puede ver el listado completo de visitas activas y registrar salidas, pero no puede crear nuevos registros ni acceder a configuraciones del sistema.
 
 ---
 
@@ -90,12 +206,15 @@ http://localhost/visitor-management/
 │                    PHP 8.0+                               │
 │                                                           │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
-│  │ auth/       │  │ visitors/    │  │ config/        │  │
-│  │ login.php   │  │ register.php │  │ database.php   │  │
-│  │ logout.php  │  │ list.php     │  │                │  │
-│  │ auth_check  │  │ detail.php   │  │                │  │
-│  └─────────────┘  │ exit.php     │  └────────────────┘  │
-│                   └──────────────┘                       │
+│  │ auth/       │  │ visitors/    │  │ admin/         │  │
+│  │ login.php   │  │ register.php │  │ users.php      │  │
+│  │ logout.php  │  │ list.php     │  │ user_form.php  │  │
+│  │ auth_check  │  │ detail.php   │  │ audit_log.php  │  │
+│  └─────────────┘  │ exit.php     │  │ visitor_edit   │  │
+│                   └──────────────┘  └────────────────┘  │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │ includes/audit.php  ← Helper centralizado de log │   │
+│  └──────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────┘
                        │ PDO (Prepared Statements)
 ┌──────────────────────▼──────────────────────────────────┐
@@ -104,6 +223,8 @@ http://localhost/visitor-management/
 │   users ──── visits ──── visitors                         │
 │                 │                                         │
 │              devices                                      │
+│                                                           │
+│   audit_log  (registra todas las acciones del sistema)    │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -127,8 +248,16 @@ login.php            expiración (30 min)
                   Expiró    Vigente
                     │          │
                     ▼          ▼
-               Redirect    Mostrar
-               +expired=1  página
+               Redirect    Verificar rol
+               +expired=1  (requireAnyRole)
+                               │
+                      ┌────────┴────────┐
+                   Sin permiso       Con permiso
+                      │                  │
+                      ▼                  ▼
+                  HTTP 403          Mostrar página
+                  Acceso            + logAudit()
+                  denegado          si hay cambios
 ```
 
 ---
@@ -198,12 +327,26 @@ $query = "SELECT * FROM users WHERE email = '$email'";
 Todo dato que proviene del usuario o de la base de datos y se muestra en HTML pasa por `htmlspecialchars()`:
 
 ```php
-echo htmlspecialchars($user_data); 
+echo htmlspecialchars($user_data);
 // Convierte < > " ' & en entidades HTML
 // Ej: <script> → &lt;script&gt; (se muestra como texto, no ejecuta)
 ```
 
-### 6. Validación de MAC Address
+### 6. Control de Acceso por Rol (RBAC)
+
+Implementado en `auth/auth_check.php` mediante dos funciones:
+
+```php
+// Bloquea con HTTP 403 si el rol no está en la lista permitida:
+requireAnyRole(['admin', 'receptionist']);
+
+// Devuelve true/false para mostrar u ocultar elementos en la vista:
+canRegisterVisit();
+```
+
+La verificación ocurre en el servidor en cada petición. No es posible eludirla manipulando el HTML o la URL desde el navegador.
+
+### 7. Validación de MAC Address
 
 La dirección MAC se valida en tres capas:
 
@@ -213,7 +356,7 @@ La dirección MAC se valida en tres capas:
 | Backend (PHP) | `preg_match()` | Seguridad: validación real |
 | Base de datos | `CHECK constraint` | Integridad: último escudo |
 
-### 7. Expiración de Sesión por Inactividad
+### 8. Expiración de Sesión por Inactividad
 
 ```php
 $session_lifetime = 30 * 60; // 30 minutos
@@ -224,18 +367,28 @@ if (time() - $_SESSION['last_activity'] > $session_lifetime) {
 $_SESSION['last_activity'] = time(); // Renovar en cada petición
 ```
 
-### 8. Transacciones de Base de Datos
+### 9. Transacciones de Base de Datos
 
-El registro de visita + dispositivos usa una transacción SQL para garantizar consistencia:
+Las operaciones que afectan múltiples tablas (registro de visita + dispositivos, eliminación de visitante) usan transacciones SQL para garantizar consistencia:
 
 ```php
 $db->beginTransaction();
-// ... INSERT visitors ...
-// ... INSERT visits ...
-// ... INSERT devices ...
-$db->commit(); // Solo si todo salió bien
-// Si algo falla: $db->rollback() → no quedan datos incompletos
+// ... INSERT / DELETE en múltiples tablas ...
+$db->commit();   // Solo si todo salió bien
+// Si algo falla:
+$db->rollBack(); // No quedan datos incompletos ni huérfanos
 ```
+
+### 10. Integridad del Log de Auditoría
+
+El log está diseñado para ser resistente a la eliminación de usuarios:
+
+```sql
+CONSTRAINT fk_audit_user FOREIGN KEY (user_id)
+    REFERENCES users(id) ON DELETE SET NULL
+```
+
+Si un usuario es eliminado del sistema, todos sus eventos históricos se conservan con `user_id = NULL`. El nombre y el rol quedan grabados en columnas independientes (`user_name`, `user_role`) en el momento del evento, por lo que la trazabilidad no se pierde.
 
 ---
 
@@ -339,34 +492,47 @@ Para la red de visitantes (VLAN 20): **WPA2-PSK + MAC Filtering**
 
 ```
 visitor-management/
-├── index.php                   ← Punto de entrada
-├── login.php                   ← Página de login
-├── dashboard.php               ← Dashboard principal
+├── index.php                       ← Punto de entrada
+├── login.php                       ← Página de login
+├── dashboard.php                   ← Dashboard principal
 │
 ├── auth/
-│   ├── auth_check.php          ← Middleware de sesión
-│   ├── login.php               ← Procesador del login
-│   └── logout.php              ← Cierre de sesión
+│   ├── auth_check.php              ← Middleware de sesión y roles
+│   ├── login.php                   ← Procesador del login
+│   └── logout.php                  ← Cierre de sesión
 │
 ├── visitors/
-│   ├── register.php            ← Registro de visita
-│   ├── list.php                ← Lista con búsqueda
-│   ├── detail.php              ← Detalle de visita
-│   └── exit.php                ← Registrar salida
+│   ├── register.php                ← Registro de visita (admin + recepcionista)
+│   ├── list.php                    ← Lista con búsqueda y filtros
+│   ├── detail.php                  ← Detalle de visita + acciones admin
+│   └── exit.php                    ← Registrar salida (todos los roles)
+│
+├── admin/                          ← 🆕 Panel de administración (solo admin)
+│   ├── users.php                   ← Lista y gestión de usuarios
+│   ├── user_form.php               ← Formulario crear/editar usuario
+│   ├── user_save.php               ← Procesador POST crear/editar
+│   ├── user_toggle.php             ← Activar/desactivar cuenta
+│   ├── user_delete.php             ← Eliminar usuario
+│   ├── visitor_edit.php            ← Editar datos de visitante
+│   ├── visitor_save.php            ← Procesador POST editar visitante
+│   ├── visitor_delete.php          ← Eliminar visitante (con transacción)
+│   └── audit_log.php               ← Bitácora de auditoría
 │
 ├── config/
-│   └── database.php            ← Conexión PDO a MySQL
+│   └── database.php                ← Conexión PDO a MySQL
 │
 ├── includes/
-│   ├── header.php              ← Navbar + Bootstrap
-│   └── footer.php              ← Scripts + cierre HTML
+│   ├── header.php                  ← Navbar + Bootstrap (con menú admin)
+│   ├── footer.php                  ← Scripts + cierre HTML
+│   └── audit.php                   ← 🆕 Helper centralizado de auditoría
 │
 ├── assets/
-│   ├── css/custom.css          ← Estilos personalizados
-│   └── js/mac-validator.js     ← Validador MAC en JS
+│   ├── css/custom.css              ← Estilos personalizados
+│   └── js/mac-validator.js         ← Validador MAC en JS
 │
 ├── database/
-│   └── schema.sql              ← Script de creación de BD
+│   ├── schema.sql                  ← Script de creación de BD (instalación nueva)
+│   └── migration_audit.sql         ← 🆕 Migración v2.0 (actualización desde v1.0)
 │
-└── README.md                   ← Este archivo
+└── README.md                       ← Este archivo
 ```
